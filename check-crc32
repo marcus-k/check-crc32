@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import argparse
+from pathlib import Path
+from operator import attrgetter
+from typing import Tuple, Union
+import zlib
+import sys
+import re
+
+__version__ = "0.1.0"
+
+if sys.version_info[0] < 3 or sys.version_info[1] < 5:
+    raise Exception("Python 3.5 or a more recent version is required.")
+
+
+def parse_args() -> argparse.Namespace:
+    """
+    Parse CLI arguments.
+
+    """
+    class SortingHelpFormatter(argparse.HelpFormatter):
+        """
+        Sort help menu options alphabetically.
+        """
+        def add_arguments(self, actions):
+            actions = sorted(actions, key=attrgetter("option_strings"))
+            super(SortingHelpFormatter, self).add_arguments(actions)
+
+    # Parse CLI arguments
+    parser = argparse.ArgumentParser(
+        prog = "check-crc32", 
+        formatter_class = SortingHelpFormatter,
+        description = """
+            Check the CRC32 hash of a file in form of a hexadecimal string in brackets.
+            The '-a' flag can be used to append the CRC32 hash to the filename if it is
+            not found. See the optional arguments for more options.
+        """,
+    )
+    parser.add_argument("src", nargs="*", help="input files")
+    parser.add_argument("-v", "--version", action="store_true", help="print version")
+    parser.add_argument("-q", "--quiet", action="store_true", help="suppress output")
+    parser.add_argument("-d", "--dry-run", action="store_true", help="run without modifying files")
+    parser.add_argument("-c", "--chunk-size", type=int, default=1024, help="chunk size in bytes when reading files")
+    parser.add_argument("-f", "--force", action="store_true", help="append even if an incorrect CRC32 hash is found")
+    parser.add_argument("-a", "--append", action="store_true", help="append CRC32 hash to filename")
+    args = parser.parse_args()
+
+    return args
+
+
+def crc32(filename: Union[Path, str], chunk_size: int = 1024) -> str:
+    """
+    Calculate the CRC32 hash of a file and return it as a hexadecimal string. 
+
+    Parameters
+    ----------
+    filename : Path or str
+        The file to calculate the CRC32 hash of.
+    
+    chunk_size : int, optional
+        The size of the chunks to read from the file in bytes. The default is 1024.
+
+    Returns
+    -------
+    str
+        The CRC32 hash of the file as a hexadecimal string.
+    
+    """
+    with open(filename, "rb") as f:
+        data = f.read(chunk_size)
+        crc = 0
+        
+        # Calculate CRC32 hash in chunks to handle large files
+        while data:
+            crc = zlib.crc32(data, crc) & 0xffffffff
+            data = f.read(chunk_size)
+    
+    return f"{crc:08x}"
+
+
+def check_crc32(
+    filename: Union[Path, str], 
+    chunk_size: int = 1024
+) -> Tuple[Union[bool, None], str]:
+    """
+    Check if the CRC32 hash of a file matches the hash in the filename. Returns None
+    if the filename does not contain a CRC32 hash. Also returns the CRC32 hash of the
+    file as a hexadecimal string.
+
+    Parameters
+    ----------
+    filename : Path or str
+        The file to check the CRC32 hash of.
+    
+    chunk_size : int, optional
+        The size of the chunks to read from the file in bytes. The default is 1024.
+
+    Returns
+    -------
+    bool or None
+        True if the CRC32 hash of the file matches the hash in the filename, False
+        if it does not, and None if the filename does not contain a CRC32 hash.
+
+    str
+        The CRC32 hash of the file as a hexadecimal string.
+    
+    """
+    f = Path(filename).absolute()
+    crc = crc32(f, chunk_size)
+
+    # Check if the filename contains a CRC32 hash in brackets
+    matches = re.findall(r"\[([0-9a-f]{8})\]", f.name, re.IGNORECASE)
+    if len(matches) == 0:
+        return None, crc
+    
+    return matches[-1].lower() == crc, crc
+
+
+def main() -> int:
+    args = parse_args()
+
+    if args.version:
+        print(f"check-crc32 {__version__}")
+        return 0
+
+    if len(args.src) == 0:
+        print("check-crc32: error: the following arguments are required: src")
+        return 1
+
+    if args.force and not args.append:
+        print("check-crc32: warning: without --append (-a), --force (-f) has no effect")
+
+    if args.dry_run and not args.append:
+        print("check-crc32: warning: without --append (-a), --dry-run (-d) has no effect")
+
+    if args.dry_run:
+        print("\033[93mDry Run")
+        print("-------\033[0m")
+
+    for filename in args.src:
+        f = Path(filename).absolute()
+        matched, crc = check_crc32(f, args.chunk_size)
+        f_rename = Path(f.parent, f"{f.stem} [{crc}]{f.suffix}")
+        
+        # Add CRC32 to filename
+        if matched is None and args.append:  
+            if not args.quiet:
+                print(f"\033[32m + {f.name} -> {f_rename.name} \033[0m")
+            if not args.dry_run:
+                f.rename(f_rename)
+
+        # Correct CRC32 already exists in filename
+        elif matched:
+            if not args.quiet:
+                print(f"\033[94m ○ {f.name}\033[0m")
+
+        # Incorrect CRC32 exists in filename
+        else:
+            if args.append and args.force:
+                if not args.quiet:
+                    print(f"\033[31m ! {f.name} -> {f_rename.name} \033[0m")
+                if not args.dry_run:
+                    f.rename(f_rename)
+            else:
+                if not args.quiet:
+                    print(f"\033[31m × {f.name} \033[0m")
+
+    return 0
+    
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print()
+        sys.exit(0)
