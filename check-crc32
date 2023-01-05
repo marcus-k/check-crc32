@@ -9,7 +9,7 @@ import zlib
 import sys
 import re
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 if sys.version_info[0] < 3 or sys.version_info[1] < 5:
     raise Exception("Python 3.5 or a more recent version is required.")
@@ -77,7 +77,7 @@ def crc32(filename: Union[Path, str], chunk_size: int = 1024) -> str:
             crc = zlib.crc32(data, crc) & 0xffffffff
             data = f.read(chunk_size)
     
-    return f"{crc:08x}"
+    return f"{crc:08X}"
 
 
 def check_crc32(
@@ -115,7 +115,7 @@ def check_crc32(
     if len(matches) == 0:
         return None, crc
     
-    return matches[-1].lower() == crc, crc
+    return matches[-1].upper() == crc, crc
 
 
 def main() -> int:
@@ -154,7 +154,7 @@ def main() -> int:
         # Correct CRC32 already exists in filename
         elif matched:
             if not args.quiet:
-                print(f"\033[94m ○ {f.name}\033[0m")
+                print(f"\033[32m ○ {f.name}\033[0m")
 
         # Incorrect CRC32 exists in filename
         else:
@@ -169,6 +169,7 @@ def main() -> int:
 
     return 0
     
+
 if __name__ == "__main__":
     try:
         sys.exit(main())
